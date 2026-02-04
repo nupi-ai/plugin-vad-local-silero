@@ -1,0 +1,164 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net"
+	"os"
+	"os/signal"
+	"strings"
+	"sync/atomic"
+	"syscall"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/health"
+	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
+
+	napv1 "github.com/nupi-ai/nupi/api/nap/v1"
+
+	"github.com/nupi-ai/plugin-vad-local-silero/internal/config"
+	"github.com/nupi-ai/plugin-vad-local-silero/internal/engine"
+	"github.com/nupi-ai/plugin-vad-local-silero/internal/server"
+)
+
+// lazyVADServer wraps a VoiceActivityDetectionServiceServer and allows deferred
+// initialization. It returns Unavailable errors until the underlying server is set.
+type lazyVADServer struct {
+	napv1.UnimplementedVoiceActivityDetectionServiceServer
+	server atomic.Pointer[napv1.VoiceActivityDetectionServiceServer]
+}
+
+func (l *lazyVADServer) setServer(srv napv1.VoiceActivityDetectionServiceServer) {
+	l.server.Store(&srv)
+}
+
+func (l *lazyVADServer) DetectSpeech(stream napv1.VoiceActivityDetectionService_DetectSpeechServer) error {
+	srv := l.server.Load()
+	if srv == nil {
+		return status.Error(codes.Unavailable, "VAD service is initializing, please retry in a moment")
+	}
+	return (*srv).DetectSpeech(stream)
+}
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	cfg, err := config.Loader{}.Load()
+	if err != nil {
+		slog.Error("failed to load configuration", "error", err)
+		os.Exit(1)
+	}
+
+	logger := newLogger(cfg.LogLevel)
+	logger.Info("starting adapter",
+		"adapter", "vad-local-silero",
+		"listen_addr", cfg.ListenAddr,
+		"threshold", cfg.Threshold,
+		"min_speech_duration_ms", cfg.MinSpeechDurationMs,
+		"min_silence_duration_ms", cfg.MinSilenceDurationMs,
+		"speech_pad_ms", cfg.SpeechPadMs,
+	)
+
+	// STEP 1: Bind port IMMEDIATELY (before engine init)
+	lis, err := net.Listen("tcp", cfg.ListenAddr)
+	if err != nil {
+		logger.Error("failed to bind listener", "error", err)
+		os.Exit(1)
+	}
+	defer lis.Close()
+	logger.Info("listener bound, port ready", "addr", lis.Addr().String())
+
+	// STEP 2: Setup gRPC server with lazy VAD service wrapper
+	grpcServer := grpc.NewServer()
+	healthServer := health.NewServer()
+	healthgrpc.RegisterHealthServer(grpcServer, healthServer)
+
+	serviceName := napv1.VoiceActivityDetectionService_ServiceDesc.ServiceName
+	healthServer.SetServingStatus("", healthgrpc.HealthCheckResponse_NOT_SERVING)
+	healthServer.SetServingStatus(serviceName, healthgrpc.HealthCheckResponse_NOT_SERVING)
+
+	lazyService := &lazyVADServer{}
+	napv1.RegisterVoiceActivityDetectionServiceServer(grpcServer, lazyService)
+
+	// STEP 3: Start gRPC server in background
+	serverErr := make(chan error, 1)
+	go func() {
+		if err := grpcServer.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			serverErr <- err
+		}
+	}()
+	logger.Info("gRPC server started (NOT_SERVING while initializing)")
+
+	// STEP 4: Engine factory (stub for now — Silero engine in Story 2.4).
+	// Each stream gets its own engine instance for isolation.
+	newEngine := func() engine.Engine {
+		return engine.NewStubEngine()
+	}
+
+	// STEP 5: Activate the real VAD service
+	realService := server.New(cfg, logger, newEngine)
+	lazyService.setServer(napv1.VoiceActivityDetectionServiceServer(realService))
+
+	healthServer.SetServingStatus("", healthgrpc.HealthCheckResponse_SERVING)
+	healthServer.SetServingStatus(serviceName, healthgrpc.HealthCheckResponse_SERVING)
+	logger.Info("adapter ready to serve requests")
+
+	// STEP 6: Setup graceful shutdown
+	go func() {
+		<-ctx.Done()
+		logger.Info("shutdown requested, stopping gRPC server")
+		healthServer.SetServingStatus(serviceName, healthgrpc.HealthCheckResponse_NOT_SERVING)
+		healthServer.SetServingStatus("", healthgrpc.HealthCheckResponse_NOT_SERVING)
+
+		stopped := make(chan struct{})
+		go func() {
+			grpcServer.GracefulStop()
+			close(stopped)
+		}()
+
+		select {
+		case <-stopped:
+		case <-time.After(5 * time.Second):
+			logger.Warn("graceful stop timed out, forcing stop")
+			grpcServer.Stop()
+		}
+	}()
+
+	// STEP 7: Wait for server to finish or error
+	select {
+	case err := <-serverErr:
+		logger.Error("gRPC server terminated with error", "error", err)
+		os.Exit(1)
+	case <-ctx.Done():
+		// Normal shutdown via signal
+	}
+
+	logger.Info("adapter stopped")
+}
+
+func newLogger(level string) *slog.Logger {
+	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: parseLevel(level),
+	})
+	return slog.New(handler)
+}
+
+func parseLevel(value string) slog.Leveler {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "debug":
+		return slog.LevelDebug
+	case "info", "":
+		return slog.LevelInfo
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}

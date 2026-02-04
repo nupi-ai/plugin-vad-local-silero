@@ -1,0 +1,37 @@
+apiVersion: nap.nupi.ai/v1alpha1
+kind: Plugin
+type: adapter
+metadata:
+  name: Nupi Silero VAD
+  catalog: ai.nupi
+  slug: vad-local-silero
+  description: Local voice activity detection adapter backed by Silero VAD.
+  version: 1.0.0
+spec:
+  slot: vad
+  entrypoint:
+    command: ./vad-local-silero
+    args: []
+    transport: process
+    listenEnv: NUPI_ADAPTER_LISTEN_ADDR
+    readyTimeout: 10s
+  options:
+    threshold:
+      type: number
+      default: 0.5
+      description: Speech detection confidence threshold (0.0-1.0).
+    min_speech_duration_ms:
+      type: integer
+      default: 250
+      description: Minimum consecutive speech duration before emitting SPEECH_START.
+    min_silence_duration_ms:
+      type: integer
+      default: 300
+      description: Minimum consecutive silence duration before emitting SPEECH_END.
+    speech_pad_ms:
+      type: integer
+      default: 30
+      description: Padding in milliseconds before/after detected speech boundaries.
+  telemetry:
+    stdout: true
+    stderr: true
