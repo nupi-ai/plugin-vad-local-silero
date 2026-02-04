@@ -36,11 +36,22 @@ func (l Loader) Load() (Config, error) {
 
 	overrideString(l.Lookup, "NUPI_ADAPTER_LISTEN_ADDR", &cfg.ListenAddr)
 	overrideString(l.Lookup, "NUPI_LOG_LEVEL", &cfg.LogLevel)
-	overrideFloat(l.Lookup, "NUPI_VAD_THRESHOLD", &cfg.Threshold)
-	overrideInt(l.Lookup, "NUPI_VAD_MIN_SPEECH_DURATION_MS", &cfg.MinSpeechDurationMs)
-	overrideInt(l.Lookup, "NUPI_VAD_MIN_SILENCE_DURATION_MS", &cfg.MinSilenceDurationMs)
-	overrideInt(l.Lookup, "NUPI_VAD_SPEECH_PAD_MS", &cfg.SpeechPadMs)
+	if err := overrideFloat(l.Lookup, "NUPI_VAD_THRESHOLD", &cfg.Threshold); err != nil {
+		return Config{}, err
+	}
+	if err := overrideInt(l.Lookup, "NUPI_VAD_MIN_SPEECH_DURATION_MS", &cfg.MinSpeechDurationMs); err != nil {
+		return Config{}, err
+	}
+	if err := overrideInt(l.Lookup, "NUPI_VAD_MIN_SILENCE_DURATION_MS", &cfg.MinSilenceDurationMs); err != nil {
+		return Config{}, err
+	}
+	if err := overrideInt(l.Lookup, "NUPI_VAD_SPEECH_PAD_MS", &cfg.SpeechPadMs); err != nil {
+		return Config{}, err
+	}
 
+	if err := cfg.Validate(); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
 }
 
@@ -84,18 +95,24 @@ func overrideString(lookup func(string) (string, bool), key string, target *stri
 	}
 }
 
-func overrideFloat(lookup func(string) (string, bool), key string, target *float64) {
-	if value, ok := lookup(key); ok {
-		if parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64); err == nil {
-			*target = parsed
+func overrideFloat(lookup func(string) (string, bool), key string, target *float64) error {
+	if value, ok := lookup(key); ok && strings.TrimSpace(value) != "" {
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		if err != nil {
+			return fmt.Errorf("config: invalid value for %s: %w", key, err)
 		}
+		*target = parsed
 	}
+	return nil
 }
 
-func overrideInt(lookup func(string) (string, bool), key string, target *int) {
-	if value, ok := lookup(key); ok {
-		if parsed, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
-			*target = parsed
+func overrideInt(lookup func(string) (string, bool), key string, target *int) error {
+	if value, ok := lookup(key); ok && strings.TrimSpace(value) != "" {
+		parsed, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil {
+			return fmt.Errorf("config: invalid value for %s: %w", key, err)
 		}
+		*target = parsed
 	}
+	return nil
 }
