@@ -16,22 +16,25 @@ spec:
     listenEnv: NUPI_ADAPTER_LISTEN_ADDR
     readyTimeout: 10s
   options:
+    engine:
+      type: string
+      default: auto
+      description: >-
+        VAD engine selection: "auto" uses Silero if available (exits on failure unless
+        NUPI_DEV_MODE=1, which enables stub fallback); "silero" requires native engine
+        (always exits on failure); "stub" uses deterministic test engine.
     threshold:
       type: number
       default: 0.5
-      description: Speech detection confidence threshold (0.0-1.0).
+      description: Speech detection confidence threshold [0.0-1.0].
     min_speech_duration_ms:
       type: integer
       default: 250
-      description: Minimum consecutive speech duration before emitting SPEECH_START.
+      description: Minimum consecutive speech duration before emitting SPEECH_START (1-60000 ms).
     min_silence_duration_ms:
       type: integer
       default: 300
-      description: Minimum consecutive silence duration before emitting SPEECH_END.
-    speech_pad_ms:
-      type: integer
-      default: 30
-      description: Padding in milliseconds before/after detected speech boundaries.
+      description: Minimum consecutive silence duration before emitting SPEECH_END (1-60000 ms).
   telemetry:
     stdout: true
     stderr: true

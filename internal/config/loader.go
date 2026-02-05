@@ -14,8 +14,15 @@ type Loader struct {
 	Lookup func(string) (string, bool)
 }
 
+// LoadResult contains the loaded configuration and any warnings.
+type LoadResult struct {
+	Config   Config
+	Warnings []string
+}
+
 // Load retrieves the adapter configuration from environment variables.
-func (l Loader) Load() (Config, error) {
+// Returns LoadResult containing config and warnings for deprecated parameters.
+func (l Loader) Load() (LoadResult, error) {
 	if l.Lookup == nil {
 		l.Lookup = os.LookupEnv
 	}
@@ -25,48 +32,65 @@ func (l Loader) Load() (Config, error) {
 		Threshold:            DefaultThreshold,
 		MinSpeechDurationMs:  DefaultMinSpeechDurationMs,
 		MinSilenceDurationMs: DefaultMinSilenceDurationMs,
-		SpeechPadMs:          DefaultSpeechPadMs,
 	}
+
+	var warnings []string
 
 	if raw, ok := l.Lookup("NUPI_ADAPTER_CONFIG"); ok && strings.TrimSpace(raw) != "" {
-		if err := applyJSON(raw, &cfg); err != nil {
-			return Config{}, err
+		jsonWarnings, err := applyJSON(raw, &cfg)
+		if err != nil {
+			return LoadResult{}, err
 		}
+		warnings = append(warnings, jsonWarnings...)
 	}
 
+	// Warn about unsupported speech_pad_ms environment variable.
+	if _, ok := l.Lookup("NUPI_VAD_SPEECH_PAD_MS"); ok {
+		warnings = append(warnings, "NUPI_VAD_SPEECH_PAD_MS is not supported and will be ignored; use min_speech_duration_ms and min_silence_duration_ms instead")
+	}
+
+	overrideString(l.Lookup, "NUPI_VAD_ENGINE", &cfg.Engine)
 	overrideString(l.Lookup, "NUPI_ADAPTER_LISTEN_ADDR", &cfg.ListenAddr)
 	overrideString(l.Lookup, "NUPI_LOG_LEVEL", &cfg.LogLevel)
 	if err := overrideFloat(l.Lookup, "NUPI_VAD_THRESHOLD", &cfg.Threshold); err != nil {
-		return Config{}, err
+		return LoadResult{}, err
 	}
 	if err := overrideInt(l.Lookup, "NUPI_VAD_MIN_SPEECH_DURATION_MS", &cfg.MinSpeechDurationMs); err != nil {
-		return Config{}, err
+		return LoadResult{}, err
 	}
 	if err := overrideInt(l.Lookup, "NUPI_VAD_MIN_SILENCE_DURATION_MS", &cfg.MinSilenceDurationMs); err != nil {
-		return Config{}, err
-	}
-	if err := overrideInt(l.Lookup, "NUPI_VAD_SPEECH_PAD_MS", &cfg.SpeechPadMs); err != nil {
-		return Config{}, err
+		return LoadResult{}, err
 	}
 
 	if err := cfg.Validate(); err != nil {
-		return Config{}, err
+		return LoadResult{}, err
 	}
-	return cfg, nil
+	return LoadResult{Config: cfg, Warnings: warnings}, nil
 }
 
-func applyJSON(raw string, cfg *Config) error {
+func applyJSON(raw string, cfg *Config) ([]string, error) {
+	// Include speech_pad_ms in struct to detect if it was set.
 	type jsonConfig struct {
+		Engine               string   `json:"engine"`
 		ListenAddr           string   `json:"listen_addr"`
 		LogLevel             string   `json:"log_level"`
 		Threshold            *float64 `json:"threshold"`
 		MinSpeechDurationMs  *int     `json:"min_speech_duration_ms"`
 		MinSilenceDurationMs *int     `json:"min_silence_duration_ms"`
-		SpeechPadMs          *int     `json:"speech_pad_ms"`
+		SpeechPadMs          *int     `json:"speech_pad_ms"` // unsupported, for warning only
 	}
 	var payload jsonConfig
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return fmt.Errorf("config: decode NUPI_ADAPTER_CONFIG: %w", err)
+		return nil, fmt.Errorf("config: decode NUPI_ADAPTER_CONFIG: %w", err)
+	}
+
+	var warnings []string
+	if payload.SpeechPadMs != nil {
+		warnings = append(warnings, "speech_pad_ms in NUPI_ADAPTER_CONFIG is not supported and will be ignored; use min_speech_duration_ms and min_silence_duration_ms instead")
+	}
+
+	if payload.Engine != "" {
+		cfg.Engine = payload.Engine
 	}
 	if payload.ListenAddr != "" {
 		cfg.ListenAddr = payload.ListenAddr
@@ -83,10 +107,7 @@ func applyJSON(raw string, cfg *Config) error {
 	if payload.MinSilenceDurationMs != nil {
 		cfg.MinSilenceDurationMs = *payload.MinSilenceDurationMs
 	}
-	if payload.SpeechPadMs != nil {
-		cfg.SpeechPadMs = *payload.SpeechPadMs
-	}
-	return nil
+	return warnings, nil
 }
 
 func overrideString(lookup func(string) (string, bool), key string, target *string) {

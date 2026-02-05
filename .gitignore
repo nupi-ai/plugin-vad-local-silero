@@ -1,3 +1,9 @@
 vad-local-silero
 /adapter
 bin/
+lib/
+models/*.onnx
+internal/engine/silero_vad.onnx
+
+# Test binaries (from go test -c)
+*.test
