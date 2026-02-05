@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -9,11 +10,20 @@ import (
 
 func TestLoaderDefaults(t *testing.T) {
 	loader := config.Loader{
-		Lookup: func(string) (string, bool) { return "", false },
+		Lookup: func(key string) (string, bool) {
+			if key == "NUPI_VAD_ENGINE" {
+				return "silero", true
+			}
+			return "", false
+		},
 	}
-	cfg, err := loader.Load()
+	result, err := loader.Load()
 	if err != nil {
 		t.Fatal(err)
+	}
+	cfg := result.Config
+	if cfg.Engine != config.EngineSilero {
+		t.Errorf("Engine = %q, want %q", cfg.Engine, config.EngineSilero)
 	}
 	if cfg.ListenAddr != config.DefaultListenAddr {
 		t.Errorf("ListenAddr = %q, want %q", cfg.ListenAddr, config.DefaultListenAddr)
@@ -27,13 +37,42 @@ func TestLoaderDefaults(t *testing.T) {
 	if cfg.MinSilenceDurationMs != config.DefaultMinSilenceDurationMs {
 		t.Errorf("MinSilenceDurationMs = %d, want %d", cfg.MinSilenceDurationMs, config.DefaultMinSilenceDurationMs)
 	}
-	if cfg.SpeechPadMs != config.DefaultSpeechPadMs {
-		t.Errorf("SpeechPadMs = %d, want %d", cfg.SpeechPadMs, config.DefaultSpeechPadMs)
+}
+
+func TestLoaderMissingEngineDefaultsToAuto(t *testing.T) {
+	loader := config.Loader{
+		Lookup: func(string) (string, bool) { return "", false },
+	}
+	result, err := loader.Load()
+	if err != nil {
+		t.Fatalf("expected no error when NUPI_VAD_ENGINE is not set (should default to auto), got: %v", err)
+	}
+	cfg := result.Config
+	if cfg.Engine != config.EngineAuto {
+		t.Errorf("expected engine to default to %q, got %q", config.EngineAuto, cfg.Engine)
+	}
+}
+
+func TestLoaderInvalidEngine(t *testing.T) {
+	env := map[string]string{"NUPI_VAD_ENGINE": "unknown"}
+	loader := config.Loader{
+		Lookup: func(key string) (string, bool) {
+			v, ok := env[key]
+			return v, ok
+		},
+	}
+	_, err := loader.Load()
+	if err == nil {
+		t.Fatal("expected error for invalid engine value")
+	}
+	if !strings.Contains(err.Error(), "engine") {
+		t.Errorf("error should mention engine, got: %v", err)
 	}
 }
 
 func TestLoaderJSON(t *testing.T) {
 	env := map[string]string{
+		"NUPI_VAD_ENGINE":     "stub",
 		"NUPI_ADAPTER_CONFIG": `{"threshold":0.7,"min_speech_duration_ms":100,"listen_addr":"localhost:9999"}`,
 	}
 	loader := config.Loader{
@@ -42,10 +81,11 @@ func TestLoaderJSON(t *testing.T) {
 			return v, ok
 		},
 	}
-	cfg, err := loader.Load()
+	result, err := loader.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
+	cfg := result.Config
 	if cfg.Threshold != 0.7 {
 		t.Errorf("Threshold = %v, want 0.7", cfg.Threshold)
 	}
@@ -63,6 +103,7 @@ func TestLoaderJSON(t *testing.T) {
 
 func TestLoaderEnvOverride(t *testing.T) {
 	env := map[string]string{
+		"NUPI_VAD_ENGINE":                 "silero",
 		"NUPI_ADAPTER_CONFIG":             `{"threshold":0.3}`,
 		"NUPI_ADAPTER_LISTEN_ADDR":        "127.0.0.1:5555",
 		"NUPI_VAD_THRESHOLD":              "0.8",
@@ -74,10 +115,11 @@ func TestLoaderEnvOverride(t *testing.T) {
 			return v, ok
 		},
 	}
-	cfg, err := loader.Load()
+	result, err := loader.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
+	cfg := result.Config
 	// Env var overrides JSON.
 	if cfg.Threshold != 0.8 {
 		t.Errorf("Threshold = %v, want 0.8 (env override)", cfg.Threshold)
@@ -92,6 +134,7 @@ func TestLoaderEnvOverride(t *testing.T) {
 
 func TestLoaderInvalidJSON(t *testing.T) {
 	env := map[string]string{
+		"NUPI_VAD_ENGINE":     "stub",
 		"NUPI_ADAPTER_CONFIG": `{bad json}`,
 	}
 	loader := config.Loader{
@@ -108,10 +151,10 @@ func TestLoaderInvalidJSON(t *testing.T) {
 
 func TestLoaderEmptyEnvVarsSkipped(t *testing.T) {
 	env := map[string]string{
+		"NUPI_VAD_ENGINE":                  "stub",
 		"NUPI_VAD_THRESHOLD":               "",
 		"NUPI_VAD_MIN_SPEECH_DURATION_MS":  "  ",
 		"NUPI_VAD_MIN_SILENCE_DURATION_MS": "",
-		"NUPI_VAD_SPEECH_PAD_MS":           "",
 	}
 	loader := config.Loader{
 		Lookup: func(key string) (string, bool) {
@@ -119,10 +162,11 @@ func TestLoaderEmptyEnvVarsSkipped(t *testing.T) {
 			return v, ok
 		},
 	}
-	cfg, err := loader.Load()
+	result, err := loader.Load()
 	if err != nil {
 		t.Fatalf("empty env vars should be skipped, got: %v", err)
 	}
+	cfg := result.Config
 	if cfg.Threshold != config.DefaultThreshold {
 		t.Errorf("Threshold should keep default for empty env, got %v", cfg.Threshold)
 	}
@@ -132,13 +176,11 @@ func TestLoaderEmptyEnvVarsSkipped(t *testing.T) {
 	if cfg.MinSilenceDurationMs != config.DefaultMinSilenceDurationMs {
 		t.Errorf("MinSilenceDurationMs should keep default for empty env, got %d", cfg.MinSilenceDurationMs)
 	}
-	if cfg.SpeechPadMs != config.DefaultSpeechPadMs {
-		t.Errorf("SpeechPadMs should keep default for empty env, got %d", cfg.SpeechPadMs)
-	}
 }
 
 func TestLoaderInvalidEnvFloat(t *testing.T) {
 	env := map[string]string{
+		"NUPI_VAD_ENGINE":    "stub",
 		"NUPI_VAD_THRESHOLD": "abc",
 	}
 	loader := config.Loader{
@@ -160,11 +202,10 @@ func TestLoaderInvalidEnvInt(t *testing.T) {
 	keys := []string{
 		"NUPI_VAD_MIN_SPEECH_DURATION_MS",
 		"NUPI_VAD_MIN_SILENCE_DURATION_MS",
-		"NUPI_VAD_SPEECH_PAD_MS",
 	}
 	for _, key := range keys {
 		t.Run(key, func(t *testing.T) {
-			env := map[string]string{key: "not_a_number"}
+			env := map[string]string{"NUPI_VAD_ENGINE": "stub", key: "not_a_number"}
 			loader := config.Loader{
 				Lookup: func(k string) (string, bool) {
 					v, ok := env[k]
@@ -187,9 +228,10 @@ func TestLoaderValidationThresholdOutOfRange(t *testing.T) {
 		name string
 		env  map[string]string
 	}{
-		{"threshold_zero", map[string]string{"NUPI_VAD_THRESHOLD": "0"}},
-		{"threshold_negative", map[string]string{"NUPI_VAD_THRESHOLD": "-0.5"}},
-		{"threshold_above_one", map[string]string{"NUPI_VAD_THRESHOLD": "1.5"}},
+		{"threshold_negative", map[string]string{"NUPI_VAD_ENGINE": "stub", "NUPI_VAD_THRESHOLD": "-0.5"}},
+		{"threshold_above_one", map[string]string{"NUPI_VAD_ENGINE": "stub", "NUPI_VAD_THRESHOLD": "1.5"}},
+		{"threshold_nan", map[string]string{"NUPI_VAD_ENGINE": "stub", "NUPI_VAD_THRESHOLD": "NaN"}},
+		{"threshold_inf", map[string]string{"NUPI_VAD_ENGINE": "stub", "NUPI_VAD_THRESHOLD": "Inf"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -216,9 +258,8 @@ func TestLoaderValidationNegativeDuration(t *testing.T) {
 		env  map[string]string
 		want string
 	}{
-		{"min_speech_zero", map[string]string{"NUPI_VAD_MIN_SPEECH_DURATION_MS": "0"}, "min_speech_duration_ms"},
-		{"min_silence_negative", map[string]string{"NUPI_VAD_MIN_SILENCE_DURATION_MS": "-1"}, "min_silence_duration_ms"},
-		{"speech_pad_negative", map[string]string{"NUPI_VAD_SPEECH_PAD_MS": "-10"}, "speech_pad_ms"},
+		{"min_speech_zero", map[string]string{"NUPI_VAD_ENGINE": "stub", "NUPI_VAD_MIN_SPEECH_DURATION_MS": "0"}, "min_speech_duration_ms"},
+		{"min_silence_negative", map[string]string{"NUPI_VAD_ENGINE": "stub", "NUPI_VAD_MIN_SILENCE_DURATION_MS": "-1"}, "min_silence_duration_ms"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -241,6 +282,7 @@ func TestLoaderValidationNegativeDuration(t *testing.T) {
 
 func TestLoaderValidationThresholdExactlyOne(t *testing.T) {
 	env := map[string]string{
+		"NUPI_VAD_ENGINE":    "stub",
 		"NUPI_VAD_THRESHOLD": "1.0",
 	}
 	loader := config.Loader{
@@ -255,29 +297,13 @@ func TestLoaderValidationThresholdExactlyOne(t *testing.T) {
 	}
 }
 
-func TestLoaderValidationSpeechPadZero(t *testing.T) {
-	env := map[string]string{
-		"NUPI_VAD_SPEECH_PAD_MS": "0",
-	}
-	loader := config.Loader{
-		Lookup: func(key string) (string, bool) {
-			v, ok := env[key]
-			return v, ok
-		},
-	}
-	_, err := loader.Load()
-	if err != nil {
-		t.Fatalf("speech_pad_ms=0 should be valid, got: %v", err)
-	}
-}
-
 func TestValidateEmptyListenAddr(t *testing.T) {
 	cfg := config.Config{
+		Engine:               config.EngineStub,
 		ListenAddr:           "",
 		Threshold:            config.DefaultThreshold,
 		MinSpeechDurationMs:  config.DefaultMinSpeechDurationMs,
 		MinSilenceDurationMs: config.DefaultMinSilenceDurationMs,
-		SpeechPadMs:          config.DefaultSpeechPadMs,
 	}
 	err := cfg.Validate()
 	if err == nil {
@@ -290,11 +316,11 @@ func TestValidateEmptyListenAddr(t *testing.T) {
 
 func TestValidateDirectRangeChecks(t *testing.T) {
 	valid := config.Config{
+		Engine:               config.EngineStub,
 		ListenAddr:           "localhost:0",
 		Threshold:            0.5,
 		MinSpeechDurationMs:  250,
 		MinSilenceDurationMs: 300,
-		SpeechPadMs:          30,
 	}
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("valid config should pass, got: %v", err)
@@ -305,12 +331,12 @@ func TestValidateDirectRangeChecks(t *testing.T) {
 		mutate func(*config.Config)
 		want   string
 	}{
-		{"threshold_zero", func(c *config.Config) { c.Threshold = 0 }, "threshold"},
 		{"threshold_negative", func(c *config.Config) { c.Threshold = -0.1 }, "threshold"},
 		{"threshold_above_one", func(c *config.Config) { c.Threshold = 1.01 }, "threshold"},
+		{"threshold_nan", func(c *config.Config) { c.Threshold = math.NaN() }, "threshold"},
+		{"threshold_inf", func(c *config.Config) { c.Threshold = math.Inf(1) }, "threshold"},
 		{"min_speech_zero", func(c *config.Config) { c.MinSpeechDurationMs = 0 }, "min_speech_duration_ms"},
 		{"min_silence_negative", func(c *config.Config) { c.MinSilenceDurationMs = -1 }, "min_silence_duration_ms"},
-		{"speech_pad_negative", func(c *config.Config) { c.SpeechPadMs = -1 }, "speech_pad_ms"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -324,5 +350,121 @@ func TestValidateDirectRangeChecks(t *testing.T) {
 				t.Errorf("error should mention %s, got: %v", tt.want, err)
 			}
 		})
+	}
+}
+
+func TestLoaderValidationThresholdZeroValid(t *testing.T) {
+	env := map[string]string{
+		"NUPI_VAD_ENGINE":    "stub",
+		"NUPI_VAD_THRESHOLD": "0",
+	}
+	loader := config.Loader{
+		Lookup: func(key string) (string, bool) {
+			v, ok := env[key]
+			return v, ok
+		},
+	}
+	_, err := loader.Load()
+	if err != nil {
+		t.Fatalf("threshold=0.0 should be valid, got: %v", err)
+	}
+}
+
+func TestValidateWhitespaceListenAddr(t *testing.T) {
+	cfg := config.Config{
+		Engine:               config.EngineStub,
+		ListenAddr:           "  ",
+		Threshold:            config.DefaultThreshold,
+		MinSpeechDurationMs:  config.DefaultMinSpeechDurationMs,
+		MinSilenceDurationMs: config.DefaultMinSilenceDurationMs,
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error for whitespace-only listen address")
+	}
+	if !strings.Contains(err.Error(), "listen address") {
+		t.Errorf("error should mention listen address, got: %v", err)
+	}
+}
+
+func TestValidateListenAddrFromJSON(t *testing.T) {
+	env := map[string]string{
+		"NUPI_VAD_ENGINE":     "stub",
+		"NUPI_ADAPTER_CONFIG": `{"listen_addr": "  "}`,
+	}
+	loader := config.Loader{
+		Lookup: func(key string) (string, bool) {
+			v, ok := env[key]
+			return v, ok
+		},
+	}
+	_, err := loader.Load()
+	if err == nil {
+		t.Fatal("expected error for whitespace listen_addr in JSON")
+	}
+	if !strings.Contains(err.Error(), "listen address") {
+		t.Errorf("error should mention listen address, got: %v", err)
+	}
+}
+
+func TestLoaderWarnsSpeechPadMsEnv(t *testing.T) {
+	// Verify that NUPI_VAD_SPEECH_PAD_MS env var generates a warning.
+	env := map[string]string{
+		"NUPI_VAD_ENGINE":        "stub",
+		"NUPI_VAD_SPEECH_PAD_MS": "100",
+	}
+	loader := config.Loader{
+		Lookup: func(key string) (string, bool) {
+			v, ok := env[key]
+			return v, ok
+		},
+	}
+	result, err := loader.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Warnings) == 0 {
+		t.Fatal("expected warning for NUPI_VAD_SPEECH_PAD_MS")
+	}
+	found := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "NUPI_VAD_SPEECH_PAD_MS") && strings.Contains(w, "not supported") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected warning about NUPI_VAD_SPEECH_PAD_MS, got: %v", result.Warnings)
+	}
+}
+
+func TestLoaderWarnsSpeechPadMsJSON(t *testing.T) {
+	// Verify that speech_pad_ms in JSON config generates a warning.
+	env := map[string]string{
+		"NUPI_VAD_ENGINE":     "stub",
+		"NUPI_ADAPTER_CONFIG": `{"speech_pad_ms": 100}`,
+	}
+	loader := config.Loader{
+		Lookup: func(key string) (string, bool) {
+			v, ok := env[key]
+			return v, ok
+		},
+	}
+	result, err := loader.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Warnings) == 0 {
+		t.Fatal("expected warning for speech_pad_ms in JSON")
+	}
+	found := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "speech_pad_ms") && strings.Contains(w, "not supported") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected warning about speech_pad_ms, got: %v", result.Warnings)
 	}
 }

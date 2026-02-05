@@ -48,20 +48,27 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	cfg, err := config.Loader{}.Load()
+	loadResult, err := config.Loader{}.Load()
 	if err != nil {
 		slog.Error("failed to load configuration", "error", err)
 		os.Exit(1)
 	}
+	cfg := loadResult.Config
 
 	logger := newLogger(cfg.LogLevel)
+
+	// Log warnings for deprecated/unsupported config options.
+	for _, warn := range loadResult.Warnings {
+		logger.Warn(warn)
+	}
+
 	logger.Info("starting adapter",
 		"adapter", "vad-local-silero",
+		"engine_config", cfg.Engine, // configured value, may be "auto"
 		"listen_addr", cfg.ListenAddr,
 		"threshold", cfg.Threshold,
 		"min_speech_duration_ms", cfg.MinSpeechDurationMs,
 		"min_silence_duration_ms", cfg.MinSilenceDurationMs,
-		"speech_pad_ms", cfg.SpeechPadMs,
 	)
 
 	// STEP 1: Bind port IMMEDIATELY (before engine init)
@@ -74,7 +81,11 @@ func main() {
 	logger.Info("listener bound, port ready", "addr", lis.Addr().String())
 
 	// STEP 2: Setup gRPC server with lazy VAD service wrapper
-	grpcServer := grpc.NewServer()
+	// Limit message size to prevent memory spikes from oversized payloads.
+	// Add 64KB headroom for protobuf overhead beyond PCM data.
+	grpcServer := grpc.NewServer(
+		grpc.MaxRecvMsgSize(server.MaxPCMChunkBytes+64*1024),
+	)
 	healthServer := health.NewServer()
 	healthgrpc.RegisterHealthServer(grpcServer, healthServer)
 
@@ -94,10 +105,71 @@ func main() {
 	}()
 	logger.Info("gRPC server started (NOT_SERVING while initializing)")
 
-	// STEP 4: Engine factory (stub for now — Silero engine in Story 2.4).
-	// Each stream gets its own engine instance for isolation.
-	newEngine := func() engine.Engine {
-		return engine.NewStubEngine()
+	// STEP 4: Engine factory — each stream gets its own engine instance.
+	// Resolve "auto" to actual engine based on what's compiled in and working.
+	resolvedEngine := cfg.Engine
+	isAutoMode := resolvedEngine == "auto"
+
+	if isAutoMode {
+		if engine.NativeAvailable() {
+			resolvedEngine = "silero"
+		} else {
+			resolvedEngine = "stub"
+			logger.Warn("auto-detected engine: stub (native silero not compiled in, build with -tags silero for production)")
+		}
+	}
+
+	var newEngine func() engine.Engine
+	switch resolvedEngine {
+	case "silero":
+		if !engine.NativeAvailable() {
+			logger.Error("engine \"silero\" requested but native backend not compiled in (build with -tags silero)")
+			os.Exit(1)
+		}
+		// Probe: verify native engine can be created before accepting traffic.
+		probe, err := engine.NewNativeEngine(cfg.Threshold)
+		if err != nil {
+			devMode := os.Getenv("NUPI_DEV_MODE") == "1"
+			if isAutoMode && devMode {
+				// Auto mode + dev mode: fall back to stub instead of failing hard.
+				logger.Warn("native engine probe failed, falling back to stub engine (NUPI_DEV_MODE=1)",
+					"error", err,
+					"hint", "unset NUPI_DEV_MODE for production behavior")
+				resolvedEngine = "stub"
+				newEngine = func() engine.Engine {
+					return engine.NewStubEngine()
+				}
+			} else {
+				// Production or explicit silero: fail hard.
+				logger.Error("native engine probe failed — cannot start", "error", err)
+				if isAutoMode {
+					logger.Error("hint: set NUPI_DEV_MODE=1 to allow fallback to stub engine")
+				}
+				os.Exit(1)
+			}
+		} else {
+			probe.Close()
+			logger.Info("engine ready", "type", "silero")
+
+			// TODO(perf): For high concurrency, consider pooling ONNX sessions or
+			// sharing a single session with per-stream RNN state. Currently each
+			// stream creates its own session and tensors, which scales linearly.
+			newEngine = func() engine.Engine {
+				eng, err := engine.NewNativeEngine(cfg.Threshold)
+				if err != nil {
+					// Should not happen after successful probe; return nil,
+					// handled by server as stream error.
+					logger.Error("per-stream engine creation failed", "error", err)
+					return nil
+				}
+				return eng
+			}
+		}
+	case "stub":
+		logger.Warn("using stub engine — VAD results are deterministic and NOT based on audio content")
+		newEngine = func() engine.Engine {
+			return engine.NewStubEngine()
+		}
 	}
 
 	// STEP 5: Activate the real VAD service
@@ -106,7 +178,7 @@ func main() {
 
 	healthServer.SetServingStatus("", healthgrpc.HealthCheckResponse_SERVING)
 	healthServer.SetServingStatus(serviceName, healthgrpc.HealthCheckResponse_SERVING)
-	logger.Info("adapter ready to serve requests")
+	logger.Info("adapter ready to serve requests", "engine", resolvedEngine)
 
 	// STEP 6: Setup graceful shutdown
 	shutdownDone := make(chan struct{})
