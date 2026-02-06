@@ -21,7 +21,7 @@ define check_sha256_tool
 fi
 endef
 
-.PHONY: build build-stub clean test test-silero tidy download-ort download-model prepare-model
+.PHONY: build build-stub clean test test-silero tidy download-ort download-ort-all download-model prepare-model release-snapshot release
 
 # Production build with Silero VAD (requires model to be downloaded first).
 build: prepare-model
@@ -50,6 +50,18 @@ tidy:
 
 download-ort:
 	./scripts/download-ort.sh
+
+# Download ONNX Runtime for all target platforms (used by GoReleaser).
+download-ort-all:
+	./scripts/download-ort-all.sh
+
+# Build release archives locally (snapshot, no publish).
+release-snapshot: download-model prepare-model
+	goreleaser release --snapshot --clean --skip=publish
+
+# Build and publish release (requires GITHUB_TOKEN and a git tag).
+release: download-model prepare-model
+	goreleaser release --clean
 
 download-model:
 	$(call check_sha256_tool)

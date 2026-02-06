@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # macOS runner: builds native darwin + cross-compiles Linux/Windows via Zig.
+    # Using macOS avoids the need for macOS SDK when cross-compiling,
+    # and Go's linker automatically ad-hoc signs arm64 Mach-O binaries.
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # go.mod has "replace ../nupi" — checkout nupi alongside the plugin.
+      # path: ../nupi resolves to $GITHUB_WORKSPACE/../nupi on the runner.
+      - name: Checkout nupi (for replace directive)
+        uses: actions/checkout@v4
+        with:
+          repository: nupi-ai/nupi
+          path: ../nupi
+          ref: main
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: "0.14.0"
+
+      - name: Download Silero model
+        run: make download-model
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

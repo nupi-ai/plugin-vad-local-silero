@@ -25,6 +25,9 @@ import (
 	"github.com/nupi-ai/plugin-vad-local-silero/internal/server"
 )
 
+// version is set at build time by GoReleaser via -ldflags.
+var version = "dev"
+
 // lazyVADServer wraps a VoiceActivityDetectionServiceServer and allows deferred
 // initialization. It returns Unavailable errors until the underlying server is set.
 type lazyVADServer struct {
@@ -64,6 +67,7 @@ func main() {
 
 	logger.Info("starting adapter",
 		"adapter", "vad-local-silero",
+		"version", version,
 		"engine_config", cfg.Engine, // configured value, may be "auto"
 		"listen_addr", cfg.ListenAddr,
 		"threshold", cfg.Threshold,
