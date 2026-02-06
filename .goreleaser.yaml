@@ -1,0 +1,140 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: vad-local-silero
+
+before:
+  hooks:
+    - bash -c 'GOFLAGS="-tags=silero" go mod tidy'
+    - make prepare-model
+    - ./scripts/download-ort-all.sh
+
+builds:
+  - id: darwin-arm64
+    main: ./cmd/adapter/
+    binary: vad-local-silero
+    goos: [darwin]
+    goarch: [arm64]
+    flags:
+      - -tags=silero
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+    env:
+      - CGO_ENABLED=1
+
+  - id: linux-amd64
+    main: ./cmd/adapter/
+    binary: vad-local-silero
+    goos: [linux]
+    goarch: [amd64]
+    flags:
+      - -tags=silero
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+    env:
+      - CGO_ENABLED=1
+      - CC=zig cc -target x86_64-linux-gnu
+      - CXX=zig c++ -target x86_64-linux-gnu
+
+  - id: linux-arm64
+    main: ./cmd/adapter/
+    binary: vad-local-silero
+    goos: [linux]
+    goarch: [arm64]
+    flags:
+      - -tags=silero
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+    env:
+      - CGO_ENABLED=1
+      - CC=zig cc -target aarch64-linux-gnu
+      - CXX=zig c++ -target aarch64-linux-gnu
+
+  - id: windows-amd64
+    main: ./cmd/adapter/
+    binary: vad-local-silero
+    goos: [windows]
+    goarch: [amd64]
+    flags:
+      - -tags=silero
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+    env:
+      - CGO_ENABLED=1
+      - CC=zig cc -target x86_64-windows-gnu
+      - CXX=zig c++ -target x86_64-windows-gnu
+
+archives:
+  - id: archive-darwin-arm64
+    ids: [darwin-arm64]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_darwin_arm64"
+    files:
+      - plugin.yaml
+      - LICENSE
+      - THIRD_PARTY_LICENSES
+      - src: lib/darwin-arm64/*
+        dst: lib/darwin-arm64
+
+  - id: archive-linux-amd64
+    ids: [linux-amd64]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_linux_amd64"
+    files:
+      - plugin.yaml
+      - LICENSE
+      - THIRD_PARTY_LICENSES
+      - src: lib/linux-amd64/*
+        dst: lib/linux-amd64
+
+  - id: archive-linux-arm64
+    ids: [linux-arm64]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_linux_arm64"
+    files:
+      - plugin.yaml
+      - LICENSE
+      - THIRD_PARTY_LICENSES
+      - src: lib/linux-arm64/*
+        dst: lib/linux-arm64
+
+  - id: archive-windows-amd64
+    ids: [windows-amd64]
+    formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_windows_amd64"
+    files:
+      - plugin.yaml
+      - LICENSE
+      - THIRD_PARTY_LICENSES
+      - src: lib/windows-amd64/*
+        dst: lib/windows-amd64
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+release:
+  github:
+    owner: nupi-ai
+    name: plugin-vad-local-silero
+  # Draft releases require manual publish on GitHub — safety gate to allow
+  # verifying artifacts before making them public. Set to false for auto-publish.
+  draft: true
+  prerelease: auto
+  name_template: "{{.ProjectName}} v{{.Version}}"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"

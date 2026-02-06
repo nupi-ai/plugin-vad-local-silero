@@ -75,6 +75,52 @@ On Windows, run `download-ort.sh` via Git Bash or WSL.
 - Locked once the first PCM chunk is received
 - Sending `config_json` after audio starts is ignored (warning logged)
 
+## Distribution
+
+Pre-built release archives are available on the [GitHub Releases](https://github.com/nupi-ai/plugin-vad-local-silero/releases) page.
+
+### Installation
+
+```bash
+# Download and extract the archive for your platform
+tar -xzf vad-local-silero_v0.1.0_darwin_arm64.tar.gz -C ~/.nupi/plugins/vad-local-silero/
+```
+
+### Archive Layout
+
+Each archive contains everything needed to run the plugin:
+
+```
+vad-local-silero                        (binary)
+lib/<os>-<arch>/libonnxruntime.{dylib,so,dll}  (ONNX Runtime)
+plugin.yaml                             (adapter manifest)
+LICENSE
+THIRD_PARTY_LICENSES
+```
+
+The binary resolves the ONNX Runtime library relative to its own location (`lib/<os>-<arch>/`). No system-level ONNX Runtime installation is needed.
+
+### Platform Support
+
+| Platform | Archive |
+|----------|---------|
+| macOS arm64 (Apple Silicon) | `*_darwin_arm64.tar.gz` |
+| Linux amd64 | `*_linux_amd64.tar.gz` |
+| Linux arm64 | `*_linux_arm64.tar.gz` |
+| Windows amd64 | `*_windows_amd64.zip` |
+
+### Building Releases Locally
+
+```bash
+# Build snapshot archives (no publish)
+make release-snapshot
+
+# Build and publish (requires git tag + GITHUB_TOKEN)
+make release
+```
+
+Cross-compilation uses [Zig](https://ziglang.org/) as C cross-compiler for Linux and Windows targets. Install Zig >= 0.14.0 and [GoReleaser](https://goreleaser.com/) v2 before building.
+
 ## Development
 
 ```bash

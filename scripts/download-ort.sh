@@ -81,13 +81,15 @@ fi
 URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-${PLATFORM}-${ORT_VERSION}.${ARCHIVE_EXT}"
 
 # Pinned SHA256 checksums for onnxruntime-<platform>-<version>.{tgz,zip} archives.
+# NOTE: download-ort-all.sh duplicates checksums for its 4 target platforms.
+# When updating, keep both files in sync.
 get_expected_sha256() {
   case "${PLATFORM}:${ORT_VERSION}" in
     osx-arm64:1.23.0)     echo "8182db0ebb5caa21036a3c78178f17fabb98a7916bdab454467c8f4cf34bcfdf" ;;
     osx-x86_64:1.23.0)    echo "a8e43edcaa349cbfc51578a7fc61ea2b88793ccf077b4bc65aca58999d20cf0f" ;;
     linux-x64:1.23.0)     echo "b6deea7f2e22c10c043019f294a0ea4d2a6c0ae52a009c34847640db75ec5580" ;;
     linux-aarch64:1.23.0) echo "0b9f47d140411d938e47915824d8daaa424df95a88b5f1fc843172a75168f7a0" ;;
-    win-x64:1.23.0)       echo "3b0f1e9a92f2d88cf23d3fc3bdd464f55df9ecbf2aae03fd2c5b08c50f8c97bf" ;;
+    win-x64:1.23.0)       echo "72c23470310ec79a7d42d27fe9d257e6c98540c73fa5a1db1f67f538c6c16f2f" ;;
     win-arm64:1.23.0)     echo "1c61071732e0b9e83c3ee4e42d8acea4acbd5ddb4dacd5e93a3ddf0ad4df590d" ;;
     *) echo "" ;;
   esac
