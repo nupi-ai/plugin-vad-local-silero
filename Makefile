@@ -1,9 +1,10 @@
 BINARY_NAME := vad-local-silero
 
-# Pinned to Silero VAD v5.1 release (commit 84768ce, tag v5.1).
-# SHA256 verifies model integrity; URL pinned to tag to avoid upstream breakage.
-SILERO_MODEL_SHA256 := 1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3
-SILERO_MODEL_URL := https://github.com/snakers4/silero-vad/raw/v5.1/src/silero_vad/data/silero_vad.onnx
+# Pinned to Silero VAD v5.1 release (commit 84768ce).
+# URL pinned to commit SHA (not tag) to guarantee immutability.
+# To update: change commit SHA in URL, re-download, update SHA256.
+SILERO_MODEL_SHA256 := 2623a2953f6ff3d2c1e61740c6cdb7168133479b267dfef114a4a3cc5bdd788f
+SILERO_MODEL_URL := https://github.com/snakers4/silero-vad/raw/84768cefdf5a3852400e9d8237f7315d14b64a08/src/silero_vad/data/silero_vad.onnx
 
 # Portable SHA256 function for use in recipes.
 # Usage: $(call sha256,filename) - outputs hash or fails with clear error.
