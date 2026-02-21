@@ -3,7 +3,7 @@ kind: Plugin
 type: adapter
 metadata:
   name: Nupi Silero VAD
-  catalog: ai.nupi
+  namespace: ai.nupi
   slug: vad-local-silero
   description: Local voice activity detection adapter backed by Silero VAD.
   version: 1.0.0
